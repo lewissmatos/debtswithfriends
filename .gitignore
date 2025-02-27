@@ -1,0 +1,6 @@
+
+/target
+.shuttle*
+Secrets*.toml
+/src/constants.rs
+/database/*
