@@ -77,10 +77,10 @@ impl Display for Amount {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "💲{}, 🗓️{}, 🥷{}",
+            "{:.1}$ | {} | {}",
             self.value,
-            self.created_at.format("%d %m %y"),
-            self.saved_by.to_string()
+            self.created_at.format("%d-%m-%y"),
+            self.saved_by.name
         )
     }
 }
@@ -175,7 +175,7 @@ impl Plan {
         list.join("\n")
     }
 
-    pub fn plan_clients(&self) -> String {
+    pub fn show_clients(&self) -> String {
         let list = self
             .clients
             .iter()
@@ -226,7 +226,7 @@ impl Plan {
 
         let created_at = Utc::now().with_timezone(&FixedOffset::west_opt(4 * 3600).unwrap());
 
-        let amount = Amount::from(*value, client.clone(), created_at);
+        let amount = Amount::from(*value, client.clone().unwrap_or_default(), created_at);
 
         self.amounts.push(amount);
         self.save_changes_to_db()?;
@@ -235,33 +235,23 @@ impl Plan {
     }
 
     pub fn pop(&mut self, client_code: &str) -> MyResult<Option<Amount>> {
-        let client = self.get_client(client_code);
-        let created_at = Utc::now().with_timezone(&FixedOffset::west_opt(4 * 3600).unwrap());
         let removed_amount = self.amounts.pop();
-
-        let new_total = self.total.clone().unwrap_or_default().amount_value()
-            - removed_amount.clone().unwrap_or_default().amount_value();
-
-        self.total = Some(Amount::from(new_total, client, created_at));
+        self.total(&client_code).unwrap();
         self.save_changes_to_db()?;
         Ok(removed_amount)
     }
 
     pub fn reset(&mut self, client_code: &str) -> MyResult<&mut Self> {
-        let client = self.get_client(client_code);
-        let created_at = Utc::now().with_timezone(&FixedOffset::west_opt(4 * 3600).unwrap());
         self.amounts = vec![];
-        self.total = Some(Amount::from(0.0, client, created_at));
+        self.total(&client_code).unwrap();
         self.save_changes_to_db()?;
         Ok(self)
     }
 
-    pub fn restore(&mut self, client_code: &str) -> MyResult<&mut Self> {
-        let client = self.get_client(client_code);
-        let created_at = Utc::now().with_timezone(&FixedOffset::west_opt(4 * 3600).unwrap());
+    pub fn restore(&mut self) -> MyResult<&mut Self> {
         self.clients = vec![];
         self.amounts = vec![];
-        self.total = Some(Amount::from(0.0, client, created_at));
+        self.total = None;
         self.save_changes_to_db()?;
         Ok(self)
     }
@@ -299,10 +289,15 @@ impl Plan {
 
             total_amount = filtered_values.iter().sum::<f64>() + self.total.clone().unwrap().value;
         }
-        self.total = Some(Amount::from(total_amount, client.clone(), created_at));
+        self.total = Some(Amount::from(
+            total_amount,
+            client.clone().unwrap_or_default().clone(),
+            created_at,
+        ));
 
         if total_amount == 0.0 {
-            self.reset(client.code.as_ref()).unwrap();
+            self.reset(client.clone().unwrap_or_default().code.as_ref())
+                .unwrap();
         }
 
         self.save_changes_to_db()?;
@@ -320,13 +315,17 @@ impl Plan {
         self.total(client_code).unwrap().unwrap();
 
         let total = if self.total.is_none() {
-            String::from("💲0.0")
+            String::from("0.0$")
         } else {
             self.total.clone().unwrap().to_string()
         };
         self.save_changes_to_db()?;
 
-        Ok(format!("{}\nTotal:\n{}", amounts.join("\n"), total))
+        Ok(format!(
+            "{}\n\n-----------------------------\nTotal:\n{}",
+            amounts.join("\n"),
+            total
+        ))
     }
 }
 
@@ -346,19 +345,17 @@ impl Plan {
         self.clients.get(0).is_some() && self.clients.get(1).is_some()
     }
 
-    pub fn get_client_by_role(self: &Self, role: Role) -> Client {
+    pub fn get_client_by_role(self: &Self, role: Role) -> Option<Client> {
         self.clients
             .iter()
+            .cloned()
             .find(|client| client.role == role)
-            .unwrap()
-            .clone()
     }
 
-    fn get_client(self: &Self, client_code: &str) -> Client {
+    fn get_client(self: &Self, client_code: &str) -> Option<Client> {
         self.clients
             .iter()
+            .cloned()
             .find(|client| client.code == client_code)
-            .unwrap()
-            .clone()
     }
 }

@@ -4,7 +4,7 @@ use teloxide::{prelude::*, utils::command::BotCommands};
 #[tokio::main]
 async fn main() {
     pretty_env_logger::init();
-    log::info!("Starting command bot...");
+    log::info!("Iniciando bot para bregar deudas con amigos...");
 
     let bot = Bot::new(constants::TELOXIDE_TOKEN);
 
@@ -152,11 +152,14 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
                 format!(
                     "Guardado correctamente.\nEl monto {} aumentó el balance de {}",
                     parsed_value.abs(),
-                    curr_plan.get_client_by_role(match &cmd {
-                        Command::Add(_) => Role::Adder,
-                        Command::Sub(_) => Role::Subtractor,
-                        _ => unreachable!(),
-                    })
+                    curr_plan
+                        .get_client_by_role(match &cmd {
+                            Command::Add(_) => Role::Adder,
+                            Command::Sub(_) => Role::Subtractor,
+                            _ => unreachable!(),
+                        })
+                        .clone()
+                        .unwrap_or_default()
                 ),
             )
             .await?;
@@ -208,7 +211,7 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
                 return Ok(());
             }
 
-            curr_plan.restore(&teloxide_user.id.to_string())?;
+            curr_plan.restore()?;
 
             bot.send_message(
                 msg.chat.id,
@@ -219,8 +222,16 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
             return Ok(());
         }
         Command::Clients => {
-            let clients = curr_plan.plan_clients();
-            bot.send_message(msg.chat.id, clients).await?;
+            let clients = curr_plan.show_clients();
+            bot.send_message(
+                msg.chat.id,
+                if clients.is_empty() {
+                    "No hay clientes configurados aún".to_string()
+                } else {
+                    clients
+                },
+            )
+            .await?;
             return Ok(());
         }
         Command::Total => {
@@ -232,14 +243,17 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
                 Some(amount) => {
                     bot.send_message(
                         msg.chat.id,
-                        format!("El total actual de la deuda es 💲{}", amount.amount_value()),
+                        format!(
+                            "El total actual de la deuda es {:.1}$",
+                            amount.amount_value()
+                        ),
                     )
                     .await?;
                 }
                 None => {
                     bot.send_message(
                         msg.chat.id,
-                        "No existe registro del total. Se asume que podría ser 💲0.00",
+                        "No existe registro del total. Se asume que podría ser 0.0$",
                     )
                     .await?;
                 }
@@ -247,6 +261,9 @@ async fn answer(bot: Bot, msg: Message, cmd: Command) -> ResponseResult<()> {
             return Ok(());
         }
         Command::History => {
+            if !check_clients(&bot, msg.chat.id.to_string(), &curr_plan).await? {
+                return Ok(());
+            }
             let history = curr_plan.history(&teloxide_user.id.to_string());
             bot.send_message(msg.chat.id, history.unwrap_or_default())
                 .await?;
